@@ -1,8 +1,25 @@
 import html
 import json
+import io
 from pathlib import Path
 
 import streamlit as st
+
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
+    PageBreak,
+)
 
 from sami_processor import process_document
 from faizan_analysis import analyze_documents
@@ -591,6 +608,255 @@ def render_check_item(item):
     """
 
 
+
+# ---------------------------------------------------------------------
+# PDF report helper
+# ---------------------------------------------------------------------
+def build_pdf_report(full_output):
+    """Create a human-readable PDF report from the generated analysis."""
+    buffer = io.BytesIO()
+
+    # DejaVu supports the Unicode commonly returned by AI-generated reports.
+    regular_font = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    bold_font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
+    try:
+        pdfmetrics.registerFont(TTFont("TenderWiseSans", regular_font))
+        pdfmetrics.registerFont(TTFont("TenderWiseSansBold", bold_font))
+        font_name = "TenderWiseSans"
+        bold_name = "TenderWiseSansBold"
+    except Exception:
+        font_name = "Helvetica"
+        bold_name = "Helvetica-Bold"
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "TenderWiseTitle",
+        parent=styles["Title"],
+        fontName=bold_name,
+        fontSize=22,
+        leading=27,
+        alignment=TA_CENTER,
+        spaceAfter=8,
+    )
+    subtitle_style = ParagraphStyle(
+        "TenderWiseSubtitle",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=9,
+        leading=13,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#666666"),
+        spaceAfter=18,
+    )
+    section_style = ParagraphStyle(
+        "TenderWiseSection",
+        parent=styles["Heading2"],
+        fontName=bold_name,
+        fontSize=13,
+        leading=17,
+        spaceBefore=12,
+        spaceAfter=7,
+    )
+    body_style = ParagraphStyle(
+        "TenderWiseBody",
+        parent=styles["BodyText"],
+        fontName=font_name,
+        fontSize=9,
+        leading=14,
+        spaceAfter=7,
+    )
+    small_style = ParagraphStyle(
+        "TenderWiseSmall",
+        parent=styles["BodyText"],
+        fontName=font_name,
+        fontSize=8,
+        leading=12,
+        spaceAfter=4,
+    )
+
+    def p(value, style=body_style):
+        if value is None:
+            return None
+        # Escape text for ReportLab Paragraph markup.
+        import html as _html
+        return Paragraph(_html.escape(str(value)).replace("\n", "<br/>"), style)
+
+    tender_analysis = full_output.get("tender_analysis") or {}
+    company_analysis = full_output.get("company_analysis") or {}
+    final_result = full_output.get("bid_readiness_analysis") or {}
+
+    compliance = final_result.get("compliance") or {}
+    decision = final_result.get("decision") or {}
+    risks = final_result.get("risks") or {}
+    matched_results = final_result.get("matched_results") or []
+    checklist = final_result.get("checklist") or []
+    report = final_result.get("report") or {}
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=18 * mm,
+        leftMargin=18 * mm,
+        topMargin=18 * mm,
+        bottomMargin=18 * mm,
+        title="TenderWise AI - Analysis Report",
+        author="TenderWise AI",
+    )
+
+    story = [
+        Paragraph("TenderWise AI", title_style),
+        Paragraph("Tender Analysis Report", subtitle_style),
+    ]
+
+    decision_name = decision.get("decision", "UNAVAILABLE")
+    story.append(Paragraph("Bid Recommendation", section_style))
+    story.append(p(decision_name, ParagraphStyle(
+        "Decision",
+        parent=body_style,
+        fontName=bold_name,
+        fontSize=15,
+        leading=19,
+        spaceAfter=5,
+    )))
+    if decision.get("reason"):
+        story.append(p(decision.get("reason")))
+
+    story.append(Paragraph("Compliance Overview", section_style))
+    compliance_data = [
+        ["Metric", "Result"],
+        ["Compliance", f"{compliance.get('compliance_percentage', 0)}%"],
+        ["Matched", str(compliance.get("matched", 0))],
+        ["Missing", str(compliance.get("missing", 0))],
+        ["Unclear", str(compliance.get("unclear", 0))],
+    ]
+    table = Table(compliance_data, colWidths=[75 * mm, 75 * mm])
+    table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), bold_name),
+        ("FONTNAME", (0, 1), (-1, -1), font_name),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#DDDDDD")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.extend([table, Spacer(1, 5)])
+
+    report_sections = [
+        ("Executive Summary", "executive_summary"),
+        ("Tender Overview", "tender_overview"),
+        ("Company Overview", "company_overview"),
+        ("Compliance Summary", "compliance_summary"),
+        ("Matched Requirements", "matched_requirements"),
+        ("Missing Requirements", "missing_requirements"),
+        ("Unclear Requirements", "unclear_requirements"),
+        ("Risk Analysis", "risk_analysis"),
+        ("Bid Recommendation", "bid_recommendation"),
+        ("Key Reasons", "key_reasons"),
+        ("Recommended Actions", "recommended_actions"),
+    ]
+
+    for title, key in report_sections:
+        value = report.get(key)
+        if value:
+            story.append(Paragraph(title, section_style))
+            story.append(p(value))
+
+    if matched_results:
+        story.append(Paragraph("Requirement Matching", section_style))
+        for item in matched_results:
+            requirement = item.get("requirement", "Requirement")
+            status = item.get("status", "Unclear")
+            category = item.get("category", "Other")
+            priority = item.get("priority", "Unclear")
+            evidence = item.get("company_evidence", "None found")
+            reason = item.get("reason", "No explanation available.")
+
+            story.append(p(f"{requirement} — {status}", ParagraphStyle(
+                "ReqTitle",
+                parent=body_style,
+                fontName=bold_name,
+                fontSize=9,
+                leading=13,
+                spaceAfter=2,
+            )))
+            story.append(p(f"Category: {category} | Priority: {priority}", small_style))
+            story.append(p(f"Company evidence: {evidence}", small_style))
+            story.append(p(f"Assessment: {reason}", small_style))
+            story.append(Spacer(1, 3))
+
+    risk_groups = [
+        ("High Risks", risks.get("high_risks", [])),
+        ("Medium Risks", risks.get("medium_risks", [])),
+        ("Low Risks", risks.get("low_risks", [])),
+    ]
+    if any(items for _, items in risk_groups):
+        story.append(Paragraph("Risk Analysis", section_style))
+        for title, items in risk_groups:
+            if items:
+                story.append(Paragraph(title, ParagraphStyle(
+                    "RiskGroup",
+                    parent=body_style,
+                    fontName=bold_name,
+                    fontSize=10,
+                    leading=14,
+                    spaceBefore=4,
+                    spaceAfter=4,
+                )))
+                for item in items:
+                    story.append(p(item.get("risk", "Risk"), ParagraphStyle(
+                        "RiskTitle",
+                        parent=body_style,
+                        fontName=bold_name,
+                        fontSize=9,
+                        leading=13,
+                        spaceAfter=2,
+                    )))
+                    story.append(p(f"Impact: {item.get('impact', 'Not specified')}", small_style))
+                    story.append(p(f"Reason: {item.get('reason', 'Not specified')}", small_style))
+
+    if checklist:
+        story.append(Paragraph("Submission Checklist", section_style))
+        for item in checklist:
+            status = "Ready" if item.get("status") == "checked" else "Action needed"
+            story.append(p(f"{item.get('item', 'Checklist item')} — {status}", ParagraphStyle(
+                "CheckTitle",
+                parent=body_style,
+                fontName=bold_name,
+                fontSize=9,
+                leading=13,
+                spaceAfter=2,
+            )))
+            if item.get("action"):
+                story.append(p(item.get("action"), small_style))
+
+    # Keep the extracted analyses available at the end of the report.
+    if tender_analysis or company_analysis:
+        story.append(Paragraph("Analysis Data", section_style))
+        if tender_analysis:
+            story.append(p(json.dumps(tender_analysis, indent=2, ensure_ascii=False), small_style))
+        if company_analysis:
+            story.append(p(json.dumps(company_analysis, indent=2, ensure_ascii=False), small_style))
+
+    def add_page_number(canvas, doc):
+        canvas.saveState()
+        canvas.setFont(font_name, 7)
+        canvas.setFillColor(colors.HexColor("#777777"))
+        canvas.drawCentredString(
+            A4[0] / 2,
+            9 * mm,
+            f"TenderWise AI  •  Page {doc.page}",
+        )
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 # ---------------------------------------------------------------------
 # Header + intro
 # ---------------------------------------------------------------------
@@ -886,15 +1152,17 @@ if bundle:
         "company_analysis": analysis_result.get("company_analysis"),
         "bid_readiness_analysis": final_result,
     }
-    final_json = json.dumps(full_output, indent=2, ensure_ascii=False)
+    pdf_report = build_pdf_report(full_output)
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     st.download_button(
-        "Download full result",
-        data=final_json,
-        file_name="tenderwise_full_analysis.json",
-        mime="application/json",
+        "Download report",
+        data=pdf_report,
+        file_name="tenderwise_analysis_report.pdf",
+        mime="application/pdf",
         use_container_width=True,
+        key="download_report",
+        on_click="ignore",
     )
 
     st.markdown(
