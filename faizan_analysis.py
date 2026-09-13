@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from google import genai
 
 load_dotenv()
+
 # Use Streamlit Secrets on deployment, while keeping .env support locally.
 try:
     API_KEY = st.secrets.get("GEMINI_API_KEY")
@@ -249,4 +250,5 @@ def analyze_documents(tender_data,company_data):
 
     return {
         "tender_analysis":tender_analysis,
-        "company_analysis":company_analysi
+        "company_analysis":company_analysis
+    }
