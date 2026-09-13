@@ -6,7 +6,6 @@ from google import genai
 
 load_dotenv()
 
-# Use Streamlit Secrets on deployment, while keeping .env support locally.
 try:
     API_KEY = st.secrets.get("GEMINI_API_KEY")
 except Exception:
